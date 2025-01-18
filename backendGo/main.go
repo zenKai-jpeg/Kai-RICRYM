@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 
+	"github.com/brianvoe/gofakeit/v6"
 	_ "github.com/lib/pq"
 )
 
@@ -24,7 +26,7 @@ type character struct {
 type scores struct {
 	score_id     uint64
 	char_id      uint64
-	reward_score uint64
+	reward_score uint16
 }
 
 func main() {
@@ -36,6 +38,51 @@ func main() {
 
 	// Create tables if they don't exist
 	createTables(db)
+
+	// Create an error channel for goroutines to report errors
+	errCh := make(chan error, 10)
+
+	// Check if data already exists in the 'accounts' table
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM accounts").Scan(&count)
+	if err != nil {
+		log.Fatalf("Error counting accounts: %v", err)
+	}
+
+	if count > 0 {
+		fmt.Println("Data exists, skipping generation.")
+		return
+	}
+
+	// Start a goroutine to listen for errors
+	go func() {
+		for err := range errCh {
+			fmt.Println("Error:", err)
+		}
+	}()
+
+	// Generate fake data with concurrency
+	var wg sync.WaitGroup
+	numWorkers := 10
+	batchSize := 10000
+
+	// Create worker goroutines
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(start int) {
+			defer wg.Done()
+			generateFakeData(db, start, batchSize, errCh) // Pass the errCh to worker
+		}(i * batchSize)
+	}
+
+	// Wait for all workers to finish
+	wg.Wait()
+
+	// Close the error channel after all workers finish
+	close(errCh)
+
+	// Indicate that data creation is complete
+	fmt.Println("Data creation complete.")
 
 	// Set up the HTTP server
 	http.HandleFunc("/", handler)
@@ -106,4 +153,54 @@ func createTables(db *sql.DB) {
 		}
 	}
 	fmt.Println("Tables created or already exist.")
+}
+
+func generateFakeData(db *sql.DB, start int, batchSize int, errCh chan error) {
+	// Mutex for synchronized printing
+	var mu sync.Mutex
+	// Progress counter
+	var count int
+
+	for i := start; i < start+batchSize; i++ {
+		userName := gofakeit.Username()
+		email := gofakeit.Email()
+		var accID uint64
+		err := db.QueryRow("INSERT INTO accounts (userName, email) VALUES ($1, $2) RETURNING acc_id", userName, email).Scan(&accID)
+		if err != nil {
+			errCh <- fmt.Errorf("error inserting fake account: %v", err)
+			continue
+		}
+
+		// Increment counter for accounts processed
+		count++
+
+		// Periodically print progress (every 10000 accounts)
+		if count%10000 == 0 {
+			mu.Lock() // Lock to ensure safe printing
+			fmt.Printf("Progress: %d accounts processed (Batch starting at %d)\n", count, start)
+			mu.Unlock()
+		}
+
+		// Insert 4 characters per account
+		for j := 0; j < 4; j++ { // Loop for 4 characters per account
+			classID := uint8(gofakeit.Number(1, 8)) // Class ID from 1 to 8
+			var charID uint64
+			err = db.QueryRow("INSERT INTO characters (acc_id, class_id) VALUES ($1, $2) RETURNING char_id", accID, classID).Scan(&charID)
+			if err != nil {
+				errCh <- fmt.Errorf("error inserting fake character: %v", err)
+				continue
+			}
+
+			// Insert a single score per character
+			rewardScore := uint16(gofakeit.Number(0, 9999)) // Assuming reward_score ranges from 0 to 9999
+			_, err = db.Exec("INSERT INTO scores (char_id, reward_score) VALUES ($1, $2)", charID, rewardScore)
+			if err != nil {
+				errCh <- fmt.Errorf("error inserting fake score: %v", err)
+				continue
+			}
+		}
+	}
+
+	// Print completion message for the batch
+	fmt.Printf("Fake data generation complete for batch starting at %d\n", start)
 }
