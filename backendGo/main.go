@@ -1,35 +1,32 @@
 package main
 
 import (
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/brianvoe/gofakeit/v6"
 	_ "github.com/lib/pq"
+	"github.com/patrickmn/go-cache"
 )
 
+// Global cache
+var appCache *cache.Cache
+
+// Structs
 type Account struct {
 	AccID    uint64 `json:"AccID"`
 	UserName string `json:"Username"`
 	Email    string `json:"Email"`
-}
-
-type Character struct {
-	CharID  uint64
-	AccID   uint64
-	ClassID uint8
-}
-
-type Scores struct {
-	ScoreID     uint64
-	CharID      uint64
-	RewardScore uint32
 }
 
 type AccountWithClassAndScore struct {
@@ -41,315 +38,296 @@ type AccountWithClassAndScore struct {
 	Rank     int    `json:"Rank"`
 }
 
+// Cache configuration constants
+const (
+	CacheExpiration      = 5 * time.Minute
+	CacheCleanupInterval = 10 * time.Minute
+	DefaultPage          = 1
+	DefaultLimit         = 10
+	MaxResultsPerPage    = 100
+)
+
 func main() {
+	// Initialize the cache
+	initializeCache()
+
 	// Connect to the database
 	db := connectDB()
-
-	// Defer closing the connection until all database operations are complete
 	defer db.Close()
 
-	// Create tables if they don't exist
+	// Create tables if needed
 	createTables(db)
 
-	// Generate fake data if the database is empty
+	// Populate the database with fake data if it is empty
 	generateDataIfNeeded(db)
 
-	// Set up the HTTP server with routes
-	http.HandleFunc("/", handler)
+	// Set up HTTP routes
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONResponse(w, http.StatusOK, map[string]string{
+			"message": "Welcome to the API!",
+		})
+	})
 	http.HandleFunc("/accounts", func(w http.ResponseWriter, r *http.Request) {
 		paginatedHandler(w, r, db)
 	})
 
-	fmt.Println("Starting server on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		fmt.Println("Error starting server:", err)
+	// Start HTTP server
+	port := ":8080"
+	fmt.Printf("Server is running at %s\n", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, World!")
+// Initialize cache
+func initializeCache() {
+	appCache = cache.New(CacheExpiration, CacheCleanupInterval)
 }
 
-func connectDB() *sql.DB {
-	// Connection string
-	connStr := "user=postgres password=admin123 dbname=wiraDB sslmode=disable"
+// Unified JSON response function
+func writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(data)
+}
 
-	// Open a connection to the database
-	db, err := sql.Open("postgres", connStr)
+// Validate pagination parameters
+func validatePaginationParams(pageStr, limitStr string) (int, int, error) {
+	page, limit := DefaultPage, DefaultLimit
+
+	if pageStr != "" {
+		p, err := strconv.Atoi(pageStr)
+		if err != nil || p < 1 {
+			return 0, 0, fmt.Errorf("invalid 'page' parameter: must be a positive integer")
+		}
+		page = p
+	}
+
+	if limitStr != "" {
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 1 || l > MaxResultsPerPage {
+			return 0, 0, fmt.Errorf("invalid 'limit' parameter: must be between 1 and %d", MaxResultsPerPage)
+		}
+		limit = l
+	}
+
+	return page, limit, nil
+}
+
+/* --------------------------------------------------------------------------------- */
+
+// Generate cache key from query parameters
+func generateCacheKey(page, limit int, search, sort, order string) string {
+	rawKey := fmt.Sprintf("page:%d-limit:%d-search:%s-sort:%s-order:%s", page, limit, search, sort, order)
+	hash := md5.Sum([]byte(rawKey))
+	return hex.EncodeToString(hash[:])
+}
+
+// Fetch from cache or execute query
+func fetchFromCacheOrExecute(cacheKey string, queryFunc func() ([]byte, error)) ([]byte, bool, error) {
+	if cachedData, found := appCache.Get(cacheKey); found {
+		return cachedData.([]byte), true, nil
+	}
+
+	// Execute query if no cache hit
+	result, err := queryFunc()
 	if err != nil {
-		log.Fatalf("Error opening database connection: %v", err)
+		return nil, false, err
 	}
 
-	// Ensure the database connection is working
-	if err := db.Ping(); err != nil {
-		log.Fatalf("Could not connect to the database: %v", err)
-	}
-	fmt.Println("Database connection successful!")
-
-	return db
+	// Cache the result
+	appCache.Set(cacheKey, result, CacheExpiration)
+	return result, false, nil
 }
 
-func createTables(db *sql.DB) {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS accounts (
-			acc_id BIGSERIAL PRIMARY KEY,           
-			username VARCHAR(50) NOT NULL,
-			email VARCHAR(50) NOT NULL UNIQUE
-		)`,
-		`CREATE TABLE IF NOT EXISTS characters (
-			char_id BIGSERIAL PRIMARY KEY,          
-			acc_id BIGINT NOT NULL,                 
-			class_id SMALLINT NOT NULL,
-			FOREIGN KEY (acc_id) REFERENCES accounts(acc_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS scores (
-			score_id BIGSERIAL PRIMARY KEY,         
-			char_id BIGINT NOT NULL,                
-			reward_score INT NOT NULL,              
-			FOREIGN KEY (char_id) REFERENCES characters(char_id)
-		)`,
-	}
+/* --------------------------------------------------------------------------------- */
 
-	for _, query := range queries {
-		_, err := db.Exec(query)
-		if err != nil {
-			log.Fatalf("Error creating table: %v", err)
-		}
-	}
-	fmt.Println("Tables created or already exist.")
-}
-
-func generateDataIfNeeded(db *sql.DB) {
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM accounts").Scan(&count)
-	if err != nil {
-		log.Fatalf("Error counting accounts: %v", err)
-	}
-
-	if count > 0 {
-		fmt.Println("Data already exists, skipping generation.")
-		return
-	}
-
-	fmt.Println("Starting data generation...")
-
-	// Create an error channel for goroutines to report errors
-	errCh := make(chan error, 10)
-	defer close(errCh)
-
-	// Start a goroutine to listen for errors
-	go func() {
-		for err := range errCh {
-			log.Println("Error:", err)
-		}
-	}()
-
-	// Generate fake data with concurrency
-	var wg sync.WaitGroup
-	numWorkers := 10
-	batchSize := 10000
-
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func(start int) {
-			defer wg.Done()
-			generateFakeData(db, start, batchSize, errCh)
-		}(i * batchSize)
-	}
-
-	wg.Wait()
-	fmt.Println("Data generation complete.")
-}
-
-func generateFakeData(db *sql.DB, start int, batchSize int, errCh chan error) {
-	var mu sync.Mutex
-	var count int
-
-	for i := start; i < start+batchSize; i++ {
-		userName := gofakeit.Username()
-		email := gofakeit.Email()
-		var accID uint64
-		err := db.QueryRow("INSERT INTO accounts (username, email) VALUES ($1, $2) RETURNING acc_id", userName, email).Scan(&accID)
-		if err != nil {
-			errCh <- fmt.Errorf("error inserting fake account: %v", err)
-			continue
-		}
-
-		count++
-
-		if count%1000 == 0 {
-			mu.Lock()
-			fmt.Printf("Progress: %d accounts processed (Batch starting at %d)\n", count, start)
-			mu.Unlock()
-		}
-
-		for j := 0; j < 4; j++ {
-			classID := uint8(gofakeit.Number(1, 8))
-			var charID uint64
-			err = db.QueryRow("INSERT INTO characters (acc_id, class_id) VALUES ($1, $2) RETURNING char_id", accID, classID).Scan(&charID)
-			if err != nil {
-				errCh <- fmt.Errorf("error inserting fake character: %v", err)
-				continue
-			}
-
-			rewardScore := uint32(gofakeit.Number(0, 99999))
-			_, err = db.Exec("INSERT INTO scores (char_id, reward_score) VALUES ($1, $2)", charID, rewardScore)
-			if err != nil {
-				errCh <- fmt.Errorf("error inserting fake score: %v", err)
-			}
-		}
-	}
-	fmt.Printf("Fake data generation complete for batch starting at %d\n", start)
-}
-
+// Paginated handler
 func paginatedHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	// Extract query parameters
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
 	search := r.URL.Query().Get("search")
 	sort := r.URL.Query().Get("sort")
 	order := r.URL.Query().Get("order")
 
-	fmt.Printf("[DEBUG] Query Params - page: %s, limit: %s, search: %s, sort: %s, order: %s\n", pageStr, limitStr, search, sort, order)
-
-	// Validate and parse `page`
-	page, err := strconv.Atoi(pageStr)
-	if err != nil || page < 1 {
-		http.Error(w, "Invalid 'page' parameter: must be a positive integer", http.StatusBadRequest)
-		return
-	}
-
-	// Validate and parse `limit`
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil || limit < 1 || limit > 100 {
-		http.Error(w, "Invalid 'limit' parameter: must be a positive integer between 1 and 100", http.StatusBadRequest)
-		return
-	}
-
-	// Fetch paginated accounts
-	accounts, total, totalPages, err := paginatedAccounts(db, page, limit, search, sort, order)
+	// Validate input
+	page, limit, err := validatePaginationParams(pageStr, limitStr)
 	if err != nil {
-		log.Printf("[ERROR] Inside paginatedHandler: %v\n", err)
-		http.Error(w, "Failed to fetch accounts. Please try again later.", http.StatusInternalServerError)
+		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	// Prepare and send the response
-	response := map[string]interface{}{
-		"data":        accounts,
-		"total":       total,
-		"totalPages":  totalPages,
-		"currentPage": page,
+	// Generate cache key
+	cacheKey := generateCacheKey(page, limit, search, sort, order)
+
+	// Check cache or query the database
+	result, isCached, err := fetchFromCacheOrExecute(cacheKey, func() ([]byte, error) {
+		accounts, total, totalPages, err := paginatedAccounts(db, page, limit, search)
+		if err != nil {
+			return nil, err
+		}
+
+		// Prepare response payload
+		response := map[string]interface{}{
+			"data":            accounts,
+			"total":           total,
+			"totalPages":      totalPages,
+			"currentPage":     page,
+			"hasNextPage":     page < totalPages,
+			"hasPreviousPage": page > 1,
+		}
+		return json.Marshal(response)
+	})
+
+	if err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch accounts"})
+		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+
+	// Serve cached or fresh data
+	if isCached {
+		fmt.Println("[DEBUG] Cache hit for:", cacheKey)
+	} else {
+		fmt.Println("[DEBUG] Cache miss. Querying DB and caching result.")
+	}
+	w.Write(result)
 }
 
-func paginatedAccounts(db *sql.DB, page int, limit int, search, sort, order string) ([]AccountWithClassAndScore, int, int, error) {
+/* --------------------------------------------------------------------------------- */
+
+// Database connection
+func connectDB() *sql.DB {
+	connStr := os.Getenv("DB_CONNECTION")
+	if connStr == "" {
+		connStr = "user=postgres password=admin123 dbname=wiraDB sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Error connecting to database: %v", err)
+	}
+
+	err = db.Ping()
+	if err != nil {
+		log.Fatalf("Database connection failed: %v", err)
+	}
+
+	fmt.Println("Database connected successfully!")
+	return db
+}
+
+// Create tables
+func createTables(db *sql.DB) {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS accounts (acc_id BIGSERIAL PRIMARY KEY, username VARCHAR(50), email VARCHAR(50))`,
+		`CREATE TABLE IF NOT EXISTS characters (char_id BIGSERIAL PRIMARY KEY, acc_id BIGINT REFERENCES accounts(acc_id), class_id SMALLINT)`,
+		`CREATE TABLE IF NOT EXISTS scores (score_id BIGSERIAL PRIMARY KEY, char_id BIGINT REFERENCES characters(char_id), reward_score INT)`,
+	}
+
+	for _, q := range queries {
+		_, err := db.Exec(q)
+		if err != nil {
+			log.Fatalf("Failed to create table: %v", err)
+		}
+	}
+	fmt.Println("Tables verified or created.")
+}
+
+// Populate database
+func generateDataIfNeeded(db *sql.DB) {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM accounts").Scan(&count)
+	if err != nil {
+		log.Fatalf("Error checking data: %v", err)
+	}
+
+	if count > 0 {
+		fmt.Println("Data exists. Skipping generation.")
+		return
+	}
+
+	fmt.Println("Generating fake data...")
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(batch int) {
+			defer wg.Done()
+			generateFakeData(db, batch*10000, 10000)
+		}(i)
+	}
+	wg.Wait()
+	fmt.Println("Fake data generation complete!")
+}
+
+func generateFakeData(db *sql.DB, start, count int) {
+	for i := start; i < start+count; i++ {
+		username := gofakeit.Username()
+		email := gofakeit.Email()
+
+		var accID uint64
+		err := db.QueryRow("INSERT INTO accounts (username, email) VALUES ($1, $2) RETURNING acc_id", username, email).Scan(&accID)
+		if err != nil {
+			log.Printf("Error creating account: %v", err)
+			continue
+		}
+
+		for j := 0; j < 4; j++ {
+			classID := gofakeit.Number(1, 8)
+			var charID uint64
+			err = db.QueryRow("INSERT INTO characters (acc_id, class_id) VALUES ($1, $2) RETURNING char_id", accID, classID).Scan(&charID)
+			if err != nil {
+				log.Printf("Error creating character: %v", err)
+				continue
+			}
+
+			rewardScore := gofakeit.Number(10, 1000)
+			_, err = db.Exec("INSERT INTO scores (char_id, reward_score) VALUES ($1, $2)", charID, rewardScore)
+			if err != nil {
+				log.Printf("Error creating score: %v", err)
+			}
+		}
+	}
+}
+
+// Paginated accounts query
+func paginatedAccounts(db *sql.DB, page, limit int, search string) ([]AccountWithClassAndScore, int, int, error) {
 	offset := (page - 1) * limit
 
-	fmt.Println("[DEBUG] paginatedAccounts - Parameters:", page, limit, search, sort, order)
+	query := `
+		WITH ranked_accounts AS (
+			SELECT 
+				accounts.acc_id,
+				accounts.username,
+				accounts.email,
+				characters.class_id,
+				COALESCE(MAX(scores.reward_score), 0) AS score,
+				RANK() OVER (ORDER BY COALESCE(MAX(scores.reward_score), 0) DESC) AS rank
+			FROM accounts
+			INNER JOIN characters ON characters.acc_id = accounts.acc_id
+			INNER JOIN scores ON scores.char_id = characters.char_id
+			GROUP BY accounts.acc_id, accounts.username, accounts.email, characters.class_id
+		)
+		SELECT *, COUNT(*) OVER() AS total_count
+		FROM ranked_accounts
+		WHERE username ILIKE $1 OR email ILIKE $2
+		ORDER BY rank ASC, score ASC
+		LIMIT $3 OFFSET $4`
 
-	baseQuery := `
-        WITH ranked_accounts AS (
-            SELECT 
-                accounts.acc_id,
-                accounts.username,
-                accounts.email,
-                characters.class_id,
-                COALESCE(MAX(scores.reward_score), 0) AS score,
-                RANK() OVER (ORDER BY COALESCE(MAX(scores.reward_score), 0) DESC) as rank
-            FROM accounts
-            INNER JOIN characters ON characters.acc_id = accounts.acc_id
-            INNER JOIN scores ON scores.char_id = characters.char_id
-            GROUP BY accounts.acc_id, accounts.username, accounts.email, characters.class_id
-        )
-        SELECT *
-        FROM ranked_accounts
-    `
-
-	// Dynamically construct query conditions and parameters
-	queryConditions := ""
-	params := []interface{}{}
-
-	// Add search conditions if provided
-	if search != "" {
-		queryConditions += " WHERE username ILIKE $1 OR email ILIKE $2"
-		params = append(params, "%"+search+"%", "%"+search+"%")
-	}
-
-	// Add sorting logic
-	sortOrder := "ASC"
-	if order == "desc" {
-		sortOrder = "DESC"
-	}
-
-	switch sort {
-	case "Username":
-		queryConditions += fmt.Sprintf(" ORDER BY username %s", sortOrder)
-	case "ClassID":
-		queryConditions += fmt.Sprintf(" ORDER BY class_id %s", sortOrder)
-	default: // Default: Order by rank and score
-		queryConditions += fmt.Sprintf(" ORDER BY rank %s, score %s", sortOrder, sortOrder)
-	}
-
-	// Add LIMIT and OFFSET
-	params = append(params, limit, offset)
-	queryConditions += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(params)-1, len(params)) // Use proper indexing
-
-	// Combine everything into the final query
-	finalQuery := baseQuery + queryConditions
-
-	fmt.Println("[DEBUG] Final Query:", finalQuery)
-	fmt.Println("[DEBUG] Params:", params)
-
-	// Execute the query with the constructed parameters
-	rows, err := db.Query(finalQuery, params...)
+	rows, err := db.Query(query, "%"+search+"%", "%"+search+"%", limit, offset)
 	if err != nil {
-		fmt.Printf("[ERROR] Query Failure: %v\n", err)
 		return nil, 0, 0, err
 	}
 	defer rows.Close()
 
-	results := []AccountWithClassAndScore{}
+	var results []AccountWithClassAndScore
+	var total int
 	for rows.Next() {
 		var account AccountWithClassAndScore
-		err := rows.Scan(&account.AccID, &account.UserName, &account.Email, &account.ClassID, &account.Score, &account.Rank)
-		if err != nil {
-			fmt.Printf("[ERROR] Error scanning row: %v\n", err)
+		if err := rows.Scan(&account.AccID, &account.UserName, &account.Email, &account.ClassID, &account.Score, &account.Rank, &total); err != nil {
 			return nil, 0, 0, err
 		}
 		results = append(results, account)
-	}
-
-	// Count total entries for pagination
-	countQuery := `
-        WITH ranked_accounts AS (
-            SELECT 
-                accounts.acc_id,
-                accounts.username,
-                accounts.email,
-                characters.class_id,
-                COALESCE(MAX(scores.reward_score), 0) AS score,
-                RANK() OVER (ORDER BY COALESCE(MAX(scores.reward_score), 0) DESC) as rank
-            FROM accounts
-            INNER JOIN characters ON characters.acc_id = accounts.acc_id
-            INNER JOIN scores ON scores.char_id = characters.char_id
-            GROUP BY accounts.acc_id, accounts.username, accounts.email, characters.class_id
-        )
-        SELECT COUNT(*) FROM ranked_accounts
-    `
-
-	if search != "" {
-		countQuery += " WHERE username ILIKE $1 OR email ILIKE $2"
-	}
-
-	fmt.Println("[DEBUG] Count Query:", countQuery)
-
-	var total int
-	err = db.QueryRow(countQuery, params[:len(params)-2]...).Scan(&total) // Pass only search params for count query
-	if err != nil {
-		fmt.Printf("[ERROR] Count Query Failed: %v\n", err)
-		return nil, 0, 0, err
 	}
 
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
