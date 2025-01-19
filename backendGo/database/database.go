@@ -41,13 +41,7 @@ func CreateTables(db *sql.DB) {
 		`CREATE TABLE IF NOT EXISTS characters (char_id BIGSERIAL PRIMARY KEY, acc_id BIGINT REFERENCES accounts(acc_id), class_id SMALLINT)`,
 		`CREATE TABLE IF NOT EXISTS scores (score_id BIGSERIAL PRIMARY KEY, char_id BIGINT REFERENCES characters(char_id), reward_score INT)`,
 		`CREATE TABLE IF NOT EXISTS sessions (session_id UUID PRIMARY KEY, acc_id BIGINT NOT NULL, metadata TEXT, expiry_datetime TIMESTAMPTZ NOT NULL, FOREIGN KEY (acc_id) REFERENCES accounts(acc_id))`,
-		`CREATE TABLE IF NOT EXISTS email_verifications (
-			id BIGSERIAL PRIMARY KEY,
-			acc_id BIGINT NOT NULL REFERENCES accounts(acc_id),
-			verification_token UUID UNIQUE NOT NULL,
-			secret_key_2fa TEXT NOT NULL,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-		)`, // Added email_verifications table
+		`CREATE TABLE IF NOT EXISTS email_verifications (id BIGSERIAL PRIMARY KEY, acc_id BIGINT NOT NULL REFERENCES accounts(acc_id), verification_token UUID UNIQUE NOT NULL, secret_key_2fa TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)`, // Added email_verifications table
 	}
 
 	for _, q := range queries {

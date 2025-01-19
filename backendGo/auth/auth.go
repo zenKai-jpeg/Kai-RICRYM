@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/smtp"
+	"os"
 
 	"backendGo/models"
 	"backendGo/session"
@@ -14,9 +15,25 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// Load the environment variables
+func loadEnvVariables() error {
+	err := godotenv.Load("./.env")
+	if err != nil {
+		return fmt.Errorf("error loading .env file: %v", err)
+	}
+	fmt.Println("Environment variables loaded successfully.")
+	fmt.Println("SMTP_FROM:", os.Getenv("SMTP_FROM"))
+	fmt.Println("SMTP_PASSWORD:", os.Getenv("SMTP_PASSWORD"))
+	fmt.Println("SMTP_SERVER:", os.Getenv("SMTP_SERVER"))
+	fmt.Println("SMTP_PORT:", os.Getenv("SMTP_PORT"))
+
+	return nil
+}
 
 // Hash password
 func HashPassword(password string) (string, error) {
@@ -52,6 +69,7 @@ func Verify2FACode(secret, code string) bool {
 
 // Login Handler
 func LoginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	// Extract login details
 	var loginDetails struct {
 		Username  string `json:"Username"`
 		Password  string `json:"Password"`
@@ -65,35 +83,46 @@ func LoginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 	// Query the account by username
 	var account models.Account
-	err = db.QueryRow("SELECT acc_id, username, email, encrypted_password, twofa_code, is_email_verified FROM accounts WHERE username = $1",
-		loginDetails.Username).Scan(&account.AccID, &account.UserName, &account.Email, &account.EncryptedPassword, &account.TwoFACode, &account.IsEmailVerified)
-	if err != nil || !CheckPassword(account.EncryptedPassword, loginDetails.Password) {
+	err = db.QueryRow("SELECT acc_id, username, email, encrypted_password, secretkey_2fa, is_email_verified FROM accounts WHERE username = $1", loginDetails.Username).Scan(
+		&account.AccID, &account.UserName, &account.Email, &account.EncryptedPassword, &account.SecretKey2FA, &account.IsEmailVerified,
+	)
+	if err != nil {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
 		return
 	}
 
+	// Check if email is verified
 	if !account.IsEmailVerified {
-		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Email not verified."})
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Email not verified. Please check your email."})
 		return
 	}
 
-	// Compare TwoFACode directly
-	if loginDetails.TwoFACode != account.TwoFACode {
+	// Check password
+	if !CheckPassword(account.EncryptedPassword, loginDetails.Password) {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
+		return
+	}
+
+	// Verify 2FA code
+	if !Verify2FACode(account.SecretKey2FA, loginDetails.TwoFACode) {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid 2FA code"})
 		return
 	}
 
+	// Generate session for the account if it doesn't already have one
 	session.GenerateRandomSessions(db, account.AccID)
+
+	// Respond with success message
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Login successful"})
 }
 
 // Register Handler
 func RegisterHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	// Extract account details
 	var accountDetails struct {
-		Username  string `json:"Username"`
-		Email     string `json:"Email"`
-		Password  string `json:"Password"`
-		TwoFACode string `json:"TwoFACode"` // Directly get TwoFACode from user
+		Username string `json:"Username"`
+		Email    string `json:"Email"`
+		Password string `json:"Password"`
 	}
 	err := json.NewDecoder(r.Body).Decode(&accountDetails)
 	if err != nil {
@@ -101,34 +130,48 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		return
 	}
 
-	// Check if username exists
+	// Check if username already exists
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM accounts WHERE username = $1", accountDetails.Username).Scan(&count)
-	if err != nil || count > 0 {
+	if err != nil {
+		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error checking username"})
+		return
+	}
+
+	if count > 0 {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "Username already taken"})
 		return
 	}
 
-	// Hash the password
+	// Hash password
 	hashedPassword, err := HashPassword(accountDetails.Password)
 	if err != nil {
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error hashing password"})
 		return
 	}
 
-	// Insert into the database, including TwoFACode
+	// Generate 2FA secret (but don't store it in the account yet)
+	secret, _, err := Generate2FASecret()
+	if err != nil {
+		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error generating 2FA secret"})
+		return
+	}
+
+	// Generate unique verification token
+	verificationToken := uuid.New().String()
+
+	// Insert new account into the database (without secretkey_2fa, is_email_verified = false)
 	var accID uint64
-	err = db.QueryRow("INSERT INTO accounts (username, email, encrypted_password, twofa_code) VALUES ($1, $2, $3, $4) RETURNING acc_id",
-		accountDetails.Username, accountDetails.Email, hashedPassword, accountDetails.TwoFACode).Scan(&accID)
+	err = db.QueryRow("INSERT INTO accounts (username, email, encrypted_password) VALUES ($1, $2, $3) RETURNING acc_id", accountDetails.Username, accountDetails.Email, hashedPassword).Scan(&accID)
 	if err != nil {
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error creating account"})
 		return
 	}
 
-	// Generate verification token
-	verificationToken := uuid.New().String()
-	_, err = db.Exec("INSERT INTO email_verifications (acc_id, verification_token) VALUES ($1, $2)", accID, verificationToken)
+	// Store verification token and secret temporarily (using database)
+	_, err = db.Exec("INSERT INTO email_verifications (acc_id, verification_token, secret_key_2fa) VALUES ($1, $2, $3)", accID, verificationToken, secret)
 	if err != nil {
+		log.Printf("Error storing verification data: %v", err)
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error storing verification data"})
 		return
 	}
@@ -137,11 +180,14 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	verificationLink := fmt.Sprintf("http://localhost:8080/verify-email?token=%s", verificationToken)
 	err = sendVerificationEmail(accountDetails.Email, verificationLink)
 	if err != nil {
+		log.Printf("Error sending verification email: %v", err)
+		// Consider how to handle this - maybe allow resending or manual verification
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error sending verification email"})
 		return
 	}
 
-	utils.WriteJSONResponse(w, http.StatusCreated, map[string]string{"message": "Account created. Verify email to activate account."})
+	// Respond with success message
+	utils.WriteJSONResponse(w, http.StatusCreated, map[string]string{"message": "Account created. Please check your email to verify your account."})
 }
 
 // Verify Email Handler
@@ -186,10 +232,16 @@ func VerifyEmailHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 func sendVerificationEmail(toEmail, verificationLink string) error {
-	from := "namae.wa.khairul@gmail.com" // Replace with your sending email address
-	password := "qezf msgy qqlm ygit"    // Replace with your email password (or use app password)
-	smtpServer := "smtp.gmail.com"       // Replace with your SMTP server address
-	smtpPort := "587"                    // Replace with your SMTP server port
+	// Load environment variables
+	err := loadEnvVariables()
+	if err != nil {
+		return fmt.Errorf("error loading environment variables: %v", err)
+	}
+
+	from := os.Getenv("SMTP_FROM") // Read from the .env file
+	password := os.Getenv("SMTP_PASSWORD")
+	smtpServer := os.Getenv("SMTP_SERVER")
+	smtpPort := os.Getenv("SMTP_PORT")
 
 	subject := "Verify Your Account"
 	body := fmt.Sprintf("Click the following link to verify your account: %s", verificationLink)
@@ -198,6 +250,6 @@ func sendVerificationEmail(toEmail, verificationLink string) error {
 
 	auth := smtp.PlainAuth("", from, password, smtpServer)
 
-	err := smtp.SendMail(smtpServer+":"+smtpPort, auth, from, []string{toEmail}, message)
+	err = smtp.SendMail(smtpServer+":"+smtpPort, auth, from, []string{toEmail}, message)
 	return err
 }
