@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"time"
 
 	"backendGo/models"
 	"backendGo/session"
@@ -67,13 +68,12 @@ func Verify2FACode(secret, code string) bool {
 	return totp.Validate(code, secret)
 }
 
-// Login Handler
+// Login Handler (Step 1: Check username and password)
 func LoginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	// Extract login details
 	var loginDetails struct {
-		Username  string `json:"Username"`
-		Password  string `json:"Password"`
-		TwoFACode string `json:"TwoFACode"`
+		Username string `json:"Username"`
+		Password string `json:"Password"`
 	}
 	err := json.NewDecoder(r.Body).Decode(&loginDetails)
 	if err != nil {
@@ -103,8 +103,52 @@ func LoginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		return
 	}
 
+	// Generate 2FA code using the secret key
+	code, err := totp.GenerateCode(account.SecretKey2FA, time.Now())
+	if err != nil {
+		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error generating 2FA code"})
+		return
+	}
+
+	// Send the 2FA code to the user's email
+	err = send2FACodeEmail(account.Email, code)
+	if err != nil {
+		log.Printf("Error sending 2FA code: %v", err)
+		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Error sending 2FA code"})
+		return
+	}
+
+	// Respond asking the user to enter the 2FA code
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
+		"message": "Please check your email for the 2FA code and enter it in the next step.",
+	})
+}
+
+// 2FA Verification Handler (Step 2: Check 2FA code)
+func Verify2FAHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	// Extract 2FA code from the request
+	var twoFACode struct {
+		Username  string `json:"Username"`
+		TwoFACode string `json:"TwoFACode"`
+	}
+	err := json.NewDecoder(r.Body).Decode(&twoFACode)
+	if err != nil {
+		utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	// Query the account by username
+	var account models.Account
+	err = db.QueryRow("SELECT acc_id, username, email, secretkey_2fa FROM accounts WHERE username = $1", twoFACode.Username).Scan(
+		&account.AccID, &account.UserName, &account.Email, &account.SecretKey2FA,
+	)
+	if err != nil {
+		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
+		return
+	}
+
 	// Verify 2FA code
-	if !Verify2FACode(account.SecretKey2FA, loginDetails.TwoFACode) {
+	if !Verify2FACode(account.SecretKey2FA, twoFACode.TwoFACode) {
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid 2FA code"})
 		return
 	}
@@ -229,6 +273,29 @@ func VerifyEmailHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	// Redirect to login page
 	loginURL := "/login" // Or your desired login URL
 	http.Redirect(w, r, loginURL, http.StatusFound)
+}
+
+func send2FACodeEmail(toEmail, code string) error {
+	// Load environment variables
+	err := loadEnvVariables()
+	if err != nil {
+		return fmt.Errorf("error loading environment variables: %v", err)
+	}
+
+	from := os.Getenv("SMTP_FROM") // Read from the .env file
+	password := os.Getenv("SMTP_PASSWORD")
+	smtpServer := os.Getenv("SMTP_SERVER")
+	smtpPort := os.Getenv("SMTP_PORT")
+
+	subject := "Your 2FA Code"
+	body := fmt.Sprintf("Your 2FA code is: %s", code)
+
+	message := []byte(fmt.Sprintf("To: %s\r\nSubject: %s\r\n\r\n%s\r\n", toEmail, subject, body))
+
+	auth := smtp.PlainAuth("", from, password, smtpServer)
+
+	err = smtp.SendMail(smtpServer+":"+smtpPort, auth, from, []string{toEmail}, message)
+	return err
 }
 
 func sendVerificationEmail(toEmail, verificationLink string) error {
