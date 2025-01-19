@@ -1,0 +1,5 @@
+# Ignore the depreciated file in backendGo directory
+/backendGo/depreciated
+
+# Ignore the test folder in backendGo directory
+/backendGo/test
