@@ -18,9 +18,10 @@ func InitializeCache() {
 	appCache = cache.New(config.CacheExpiration, config.CacheCleanupInterval)
 }
 
-// Generate cache key from query parameters
-func GenerateCacheKey(page, limit int, search, sort, order string) string {
-	rawKey := fmt.Sprintf("page:%d-limit:%d-search:%s-sort:%s-order:%s", page, limit, search, sort, order)
+// Generate cache key from query parameters, including the new filters (class, minScore, maxScore)
+func GenerateCacheKey(page, limit int, search, sort, order, class, minScoreStr, maxScoreStr string) string {
+	// Include class, minScore, and maxScore in the cache key generation
+	rawKey := fmt.Sprintf("page:%d-limit:%d-search:%s-sort:%s-order:%s-class:%s-minScore:%s-maxScore:%s", page, limit, search, sort, order, class, minScoreStr, maxScoreStr)
 	hash := md5.Sum([]byte(rawKey))
 	return hex.EncodeToString(hash[:])
 }

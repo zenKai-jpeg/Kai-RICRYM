@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"backendGo/cache"
 	"backendGo/config"
@@ -22,21 +23,29 @@ func PaginatedHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	search := r.URL.Query().Get("search")
 	sort := r.URL.Query().Get("sort")
 	order := r.URL.Query().Get("order")
+	class := r.URL.Query().Get("class")          // New parameter for class filter
+	minScoreStr := r.URL.Query().Get("minScore") // New parameter for minimum score filter
+	maxScoreStr := r.URL.Query().Get("maxScore") // New parameter for maximum score filter
 
 	// Validate input
-	page, limit, err := utils.ValidatePaginationParams(pageStr, limitStr)
+	page, limit, err := validatePaginationParams(pageStr, limitStr)
 	if err != nil {
 		utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	// Generate cache key
-	cacheKey := cache.GenerateCacheKey(page, limit, search, sort, order)
+	// Generate cache key (including the new filters)
+	cacheKey := cache.GenerateCacheKey(page, limit, search, sort, order, class, minScoreStr, maxScoreStr)
+
+	// Debugging log for cache key
+	fmt.Println("Cache Key:", cacheKey)
 
 	// Check cache or query the database
 	result, isCached, err := cache.FetchFromCacheOrExecute(cacheKey, func() ([]byte, error) {
-		accounts, total, totalPages, err := paginatedAccounts(db, page, limit, search)
+		accounts, total, totalPages, err := paginatedAccounts(db, page, limit, search, sort, order, class, minScoreStr, maxScoreStr)
 		if err != nil {
+			// Log error if query fails
+			fmt.Println("Error in paginatedAccounts query:", err)
 			return nil, err
 		}
 
@@ -53,6 +62,8 @@ func PaginatedHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	})
 
 	if err != nil {
+		// Log the error and return the response
+		fmt.Println("Failed to fetch accounts:", err)
 		utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch accounts"})
 		return
 	}
@@ -63,13 +74,30 @@ func PaginatedHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	} else {
 		fmt.Println("[DEBUG] Cache miss. Querying DB and caching result.")
 	}
+
+	// Log the response result for debugging
+	fmt.Println("Final Response:", string(result))
+
 	w.Write(result)
 }
-
-func paginatedAccounts(db *sql.DB, page, limit int, search string) ([]models.AccountWithClassAndScore, int, int, error) {
+func paginatedAccounts(db *sql.DB, page, limit int, search, sort, order, class, minScoreStr, maxScoreStr string) ([]models.AccountWithClassAndScore, int, int, error) {
 	offset := (page - 1) * limit
 
-	query := `
+	// Whitelist sorting columns
+	sortColumn := "rank"
+	switch sort {
+	case "rank", "username", "class_id", "score":
+		sortColumn = sort
+	}
+
+	// Validate order direction
+	sortOrder := "ASC"
+	if order == "desc" {
+		sortOrder = "DESC"
+	}
+
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString(`
 		WITH ranked_accounts AS (
 			SELECT
 				accounts.acc_id,
@@ -85,12 +113,52 @@ func paginatedAccounts(db *sql.DB, page, limit int, search string) ([]models.Acc
 		)
 		SELECT *, COUNT(*) OVER() AS total_count
 		FROM ranked_accounts
-		WHERE username ILIKE $1 OR email ILIKE $2
-		ORDER BY rank ASC, score ASC
-		LIMIT $3 OFFSET $4`
+		WHERE 1=1 -- Start with a condition that is always true
+	`)
 
-	rows, err := db.Query(query, "%"+search+"%", "%"+search+"%", limit, offset)
+	params := make([]interface{}, 0)
+	paramIndex := 1
+
+	if search != "" {
+		queryBuilder.WriteString(fmt.Sprintf(" AND (username ILIKE $%d OR email ILIKE $%d)", paramIndex, paramIndex+1))
+		params = append(params, "%"+search+"%", "%"+search+"%")
+		paramIndex += 2
+	}
+
+	if class != "" {
+		queryBuilder.WriteString(fmt.Sprintf(" AND class_id = $%d", paramIndex))
+		params = append(params, class)
+		paramIndex++
+	}
+
+	if minScoreStr != "" {
+		if minScore, err := strconv.Atoi(minScoreStr); err == nil {
+			queryBuilder.WriteString(fmt.Sprintf(" AND score >= $%d", paramIndex))
+			params = append(params, minScore)
+			paramIndex++
+		} else {
+			fmt.Println("Invalid minScore value:", minScoreStr)
+		}
+	}
+
+	if maxScoreStr != "" {
+		if maxScore, err := strconv.Atoi(maxScoreStr); err == nil {
+			queryBuilder.WriteString(fmt.Sprintf(" AND score <= $%d", paramIndex))
+			params = append(params, maxScore)
+			paramIndex++
+		} else {
+			fmt.Println("Invalid maxScore value:", maxScoreStr)
+		}
+	}
+
+	queryBuilder.WriteString(fmt.Sprintf(" ORDER BY %s %s LIMIT $%d OFFSET $%d", sortColumn, sortOrder, paramIndex, paramIndex+1))
+	params = append(params, limit, offset)
+
+	fmt.Println("Executing query:", queryBuilder.String())
+
+	rows, err := db.Query(queryBuilder.String(), params...)
 	if err != nil {
+		fmt.Println("Query execution error:", err)
 		return nil, 0, 0, err
 	}
 	defer rows.Close()
@@ -100,11 +168,14 @@ func paginatedAccounts(db *sql.DB, page, limit int, search string) ([]models.Acc
 	for rows.Next() {
 		var account models.AccountWithClassAndScore
 		if err := rows.Scan(&account.AccID, &account.UserName, &account.Email, &account.ClassID, &account.Score, &account.Rank, &total); err != nil {
+			// Log error if row scan fails
+			fmt.Println("Error scanning row:", err)
 			return nil, 0, 0, err
 		}
 		results = append(results, account)
 	}
 
+	// Calculate total pages for pagination
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
 	return results, total, totalPages, nil
 }

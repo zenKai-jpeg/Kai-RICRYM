@@ -11,7 +11,9 @@ import (
 	"backendGo/handlers"
 	"backendGo/session"
 	"backendGo/utils"
-) // Add this new import
+
+	"github.com/rs/cors"
+)
 
 func main() {
 	// Initialize the cache
@@ -49,10 +51,18 @@ func main() {
 		auth.VerifyEmailHandler(w, r, db)
 	}) // Add this new route
 
-	// Start HTTP server
+	// Set up CORS
+	corsHandler := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173"}, // Allow requests from your frontend's URL
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}).Handler
+
+	// Start HTTP server with CORS support
 	port := ":8080"
 	fmt.Printf("Server is running at %s\n", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
+	if err := http.ListenAndServe(port, corsHandler(http.DefaultServeMux)); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

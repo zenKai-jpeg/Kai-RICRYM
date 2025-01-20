@@ -1,47 +1,32 @@
 <script setup>
-import HelloWorld from './components/HelloWorld.vue'
-import TheWelcome from './components/TheWelcome.vue'
+import { useRouter } from 'vue-router';
+import '@/assets/main.css';
+
+const router = useRouter();
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="./assets/logo.svg" width="125" height="125" />
+  <div>
+    <!-- Header Section -->
+    <header class="header">
+      <div class="header-logo-container">
+        <router-link to="/">
+          <img
+            src="https://www.wira.org/assets/wira-logo-full.cc14df8b.png"
+            alt="Wira Logo"
+            class="header-logo"
+          />
+        </router-link>
+      </div>
+      <div class="button-container">
+        <button class="button" @click="router.push('/register')">Register</button>
+        <button class="button" @click="router.push('/login')">Login</button>
+      </div>
+    </header>
 
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-    </div>
-  </header>
-
-  <main>
-    <TheWelcome />
-  </main>
+    <!-- Main Content Section -->
+    <main>
+      <router-view /> <!-- Dynamic component rendering -->
+    </main>
+  </div>
 </template>
-
-<style scoped>
-header {
-  line-height: 1.5;
-}
-
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
-}
-
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
-}
-</style>

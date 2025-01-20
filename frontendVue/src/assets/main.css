@@ -1,35 +1,372 @@
-@import './base.css';
-
-#app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  font-weight: normal;
+/* Global Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
 }
 
-a,
-.green {
-  text-decoration: none;
-  color: hsla(160, 100%, 37%, 1);
-  transition: 0.4s;
-  padding: 3px;
+main {
+  padding-top: 80px; /* Adjust the value based on the height of your header */
 }
 
-@media (hover: hover) {
-  a:hover {
-    background-color: hsla(160, 100%, 37%, 0.2);
+.header {
+  position: fixed; /* Fix the header at the top of the page */
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  padding: 5px 20px;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #0e0e0e;
+  z-index: 1000; /* Ensure it stays on top */
+}
+
+/* Set the background color of the entire page to black */
+body {
+  background-image: url('@/assets/bg.jpg'); /* Path to your background image */
+  background-size: cover; /* Make the background cover the entire body */
+  background-position: center center; /* Center the background image */
+  color: #fff;
+  font-family: Arial, sans-serif;
+  display: flex;
+  flex-direction: column; /* Stack the elements vertically */
+  justify-content: center; /* Vertically center content */
+  align-items: center; /* Horizontally center content */
+  height: 100vh; /* Make the body take the full height of the viewport */
+  text-align: center; /* Center text */
+  padding: 20px; /* Add some padding around */
+}
+
+/* Container for the entire player list */
+.player-list-container {
+  padding: 30px;
+  background-color: rgba(0, 0, 0, 0.8); /* Set background color with opacity (80%) */
+  border-radius: 20px;
+  max-width: 1200px;
+  height: 55vh; /* Set a fixed height for the container */
+  display: flex;
+  flex-direction: column; /* Allow the table to grow and fill space */
+}
+
+/* Logo Container */
+.logo-container {
+  display: flex;
+  justify-content: center; /* Center the logo horizontally */
+  align-items: center; /* Center the logo vertically */
+  margin-bottom: 50px; /* Add some space below the logo */
+}
+
+/* Logo Image */
+.logo {
+  max-height: 300px; /* Set the maximum height of the logo */
+  width: auto; /* Maintain the aspect ratio */
+}
+
+.header-logo {
+  max-height: 50px;
+}
+
+.button-container {
+  display: flex;
+  gap: 1rem; /* Add space between buttons */
+}
+
+/* Styles for the filter inputs */
+.filters-container {
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  width: 100%; /* Make sure the filter section takes up the full width */
+}
+
+.filter-input,
+.filter-select,
+.button {
+  padding: 10px;
+  font-size: 14px;
+  border: 1px solid #666; /* Lighter border for dark mode */
+  border-radius: 6px;
+}
+
+.filter-input,
+.filter-select {
+  flex-grow: 1; /* Allow inputs and select to expand */
+  min-width: 150px; /* Minimum width to avoid shrinking too much */
+  background-color: #333; /* Dark background for inputs and select */
+  color: #fff; /* White text */
+}
+
+.filter-input::placeholder,
+.filter-select::placeholder {
+  color: #aaa; /* Light placeholder text */
+}
+
+.button {
+  background-color: #d7b539; /* Green button background */
+  color: rgb(0, 0, 0);
+  cursor: pointer;
+  transition: background-color 0.3s;
+  gap: 1rem;
+  min-width: 150px; /* Set a minimum width for the button */
+}
+
+.button:hover {
+  background-color: #92832c; /* Darker green on hover */
+}
+
+.button:focus,
+.filter-input:focus,
+.filter-select:focus {
+  outline: none;
+  border-color: #4CAF50; /* Highlight border color on focus */
+}
+
+/* Loading indicator */
+.loading {
+  font-size: 18px;
+  text-align: center;
+  padding: 20px;
+  color: #888;
+}
+
+/* Table Styles */
+.player-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 20px 0; /* Top margin of 10px, bottom margin of 20px */
+  background-color: #2d2d2d; /* Dark background for the table */
+  color: white; /* Set all table text to white */
+  flex-grow: 1; /* Allow the table to stretch vertically */
+  overflow-y: auto; /* Enable vertical scrolling if content overflows */
+}
+
+.player-table th,
+.player-table td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #444;
+}
+
+.player-table th {
+  background-color: #444; /* Darker background for the header */
+  cursor: pointer;
+  color: #fff;
+}
+
+.player-table th:hover {
+  background-color: #555; /* Slight hover effect for the header */
+}
+
+.player-table td {
+  font-size: 14px;
+}
+
+.player-table tr:hover {
+  background-color: #3a3a3a; /* Slight hover effect for table rows */
+}
+
+/* Loading indicator */
+.loading {
+  font-size: 18px;
+  text-align: center;
+  padding: 20px;
+  color: #888;
+  height: 400px; /* Set the same height as the table */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Pagination Controls */
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 15px;
+  margin-top: auto; /* Pushes the pagination controls to the bottom */
+}
+
+/* Pagination Buttons */
+.pagination-button {
+  background-image: url('@/assets/button.png'); /* Path to your button image */
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: transparent;
+  width: 50px;
+  height: 50px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: transparent;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 25px; /* Make the corners rounded (50% of the width/height for full circle) */
+}
+
+/* Previous Button */
+.pagination-button:last-of-type {
+  transform: rotate(180deg); /* Rotate the previous button by 180 degrees */
+}
+
+/* Disabled State */
+.pagination-button:disabled {
+  opacity: 0.4; /* Lower opacity of the image */
+  cursor: not-allowed;
+}
+
+/* Hover effect */
+.pagination-button:hover:not(:disabled) {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+/* Pagination Info */
+.page-info {
+  font-size: 14px;
+  color: #fff;
+}
+
+/* login and registtration page style */
+.form-page {
+  max-width: 400px;
+  margin: 100px auto;
+  padding: 20px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 10px;
+  text-align: center;
+  color: #fff;
+}
+
+.form-page h2 {
+  margin-bottom: 20px;
+  font-size: 24px;
+}
+
+.form-group {
+  margin-bottom: 15px;
+  text-align: left;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  border: 1px solid #666;
+  border-radius: 6px;
+  background-color: #333;
+  color: #fff;
+}
+
+.form-group input:focus {
+  border-color: #4caf50;
+  outline: none;
+}
+
+.auth-button {
+  background-color: #d7b539; /* Green button background */
+  color: rgb(0, 0, 0);
+  cursor: pointer;
+  transition: background-color 0.3s;
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px 0;
+  font-size: 16px;
+  border-radius: 6px;
+}
+
+.auth-button:hover {
+  background-color: #92832c; /* Darker green on hover */
+}
+
+.message {
+  margin-top: 15px;
+  font-size: 14px;
+  color: #ff6666;
+}
+
+/* 2fa page style */
+
+.twofa-page {
+  max-width: 400px;
+  margin: 100px auto;
+  padding: 20px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 10px;
+  text-align: center;
+  color: #fff;
+}
+
+.twofa-page h2 {
+  margin-bottom: 20px;
+  font-size: 24px;
+}
+
+.twofa-page label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.twofa-page input {
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  border: 1px solid #666;
+  border-radius: 6px;
+  background-color: #333;
+  color: #fff;
+}
+
+.twofa-page input:focus {
+  border-color: #4caf50;
+  outline: none;
+}
+
+.twofa-page button {
+  background-color: #d7b539; /* Green button background */
+  color: rgb(0, 0, 0);
+  cursor: pointer;
+  transition: background-color 0.3s;
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px 0;
+  font-size: 16px;
+  border-radius: 6px;
+}
+
+.twofa-page button:hover {
+  background-color: #92832c; /* Darker green on hover */
+}
+
+.twofa-page p {
+  margin-top: 15px;
+  font-size: 14px;
+  color: #ff6666;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .filters-container {
+    flex-direction: column;
+    align-items: flex-start;
   }
-}
 
-@media (min-width: 1024px) {
-  body {
-    display: flex;
-    place-items: center;
+  .filter-input,
+  .filter-select {
+    width: 100%;
   }
-
-  #app {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    padding: 0 2rem;
+  
+  .button {
+    width: 100%;
   }
 }
