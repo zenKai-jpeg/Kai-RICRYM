@@ -1,1 +1,1 @@
-web: nginx -p $PWD -c $PWD/nginx.conf
+web: npm run serve --prefix frontendVue

@@ -1,7 +1,0 @@
-{
-    "root": "frontendVue/dist/",
-    "routes": {
-      "/**": "index.html"
-    }
-  }
-  
