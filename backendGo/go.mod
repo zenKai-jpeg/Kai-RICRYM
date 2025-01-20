@@ -3,7 +3,6 @@ module backendGo
 go 1.23.4
 
 require (
-	github.com/brianvoe/gofakeit v3.18.0+incompatible
 	github.com/brianvoe/gofakeit/v6 v6.28.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
@@ -12,7 +11,10 @@ require (
 	golang.org/x/crypto v0.32.0
 )
 
-require github.com/rs/cors v1.11.1
+require (
+	github.com/brianvoe/gofakeit v3.18.0+incompatible
+	github.com/rs/cors v1.11.1
+)
 
 require (
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
