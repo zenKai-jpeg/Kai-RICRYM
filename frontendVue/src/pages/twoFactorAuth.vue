@@ -26,16 +26,16 @@ export default {
   methods: {
     async verify2FA() {
       try {
-        const response = await axios.post('http://localhost:8080/verify-2fa', {
-          Username: this.$route.params.username, // Store username on login
-          TwoFACode: this.twofaCode
+        const response = await axios.post("http://localhost:8080/verify-2fa", {
+          Username: this.$route.query.username, // Get username from the query string
+          TwoFACode: this.twofaCode, // User's input
         });
         this.message = response.data.message;
-        this.$router.push('/');
+        this.$router.push("/"); // Redirect on success
       } catch (error) {
-        this.message = error.response.data.error;
+        this.message = error.response?.data?.error || "Error verifying 2FA.";
       }
-    }
-  }
+    },
+  },
 };
 </script>

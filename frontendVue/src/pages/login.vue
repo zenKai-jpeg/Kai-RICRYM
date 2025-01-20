@@ -28,7 +28,7 @@ export default {
       message: "",
     };
   },
-  methods: {
+    methods: {
     async loginUser() {
       try {
         const response = await axios.post("http://localhost:8080/login", {
@@ -36,7 +36,9 @@ export default {
           Password: this.password,
         });
         this.message = response.data.message;
-        this.$router.push("/2fa");
+
+        // Redirect to the 2FA page with the username as a query parameter
+        this.$router.push({ path: "/2fa", query: { username: this.username } });
       } catch (error) {
         this.message = error.response?.data?.error || "Login failed.";
       }

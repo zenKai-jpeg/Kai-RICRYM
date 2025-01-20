@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"backendGo/auth"
 	"backendGo/cache"
 	"backendGo/database"
 	"backendGo/handlers"
-
-	// "backendGo/session"
 	"backendGo/utils"
 
 	"github.com/rs/cors"
@@ -30,9 +29,6 @@ func main() {
 	// Populate the database with fake data if it is empty
 	database.GenerateDataIfNeeded(db)
 
-	// Generate sessions for all accounts
-	// session.GenerateSessionsForAllAccounts(db)
-
 	// Set up HTTP routes
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
@@ -50,7 +46,10 @@ func main() {
 	})
 	http.HandleFunc("/verify-email", func(w http.ResponseWriter, r *http.Request) {
 		auth.VerifyEmailHandler(w, r, db)
-	}) // Add this new route
+	})
+	http.HandleFunc("/verify-2fa", func(w http.ResponseWriter, r *http.Request) {
+		auth.Verify2FAHandler(w, r, db)
+	})
 
 	// Set up CORS
 	corsHandler := cors.New(cors.Options{
@@ -60,10 +59,15 @@ func main() {
 		AllowCredentials: true,
 	}).Handler
 
+	// Get the port from the environment variable or default to 8080
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // fallback port for local development
+	}
+
 	// Start HTTP server with CORS support
-	port := ":8080"
-	fmt.Printf("Server is running at %s\n", port)
-	if err := http.ListenAndServe(port, corsHandler(http.DefaultServeMux)); err != nil {
+	fmt.Printf("Server is running at :%s\n", port)
+	if err := http.ListenAndServe(":"+port, corsHandler(http.DefaultServeMux)); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

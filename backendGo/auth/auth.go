@@ -125,9 +125,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	})
 }
 
-// 2FA Verification Handler (Step 2: Check 2FA code)
 func Verify2FAHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	// Extract 2FA code from the request
 	var twoFACode struct {
 		Username  string `json:"Username"`
 		TwoFACode string `json:"TwoFACode"`
@@ -138,29 +136,31 @@ func Verify2FAHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		return
 	}
 
-	// Query the account by username
+	log.Printf("Received 2FA verification request: Username=%s, Code=%s", twoFACode.Username, twoFACode.TwoFACode)
+
 	var account models.Account
 	err = db.QueryRow("SELECT acc_id, username, email, secretkey_2fa FROM accounts WHERE username = $1", twoFACode.Username).Scan(
 		&account.AccID, &account.UserName, &account.Email, &account.SecretKey2FA,
 	)
 	if err != nil {
+		log.Printf("Error fetching account: %v", err)
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
 		return
 	}
 
-	// Verify 2FA code
+	log.Printf("Fetched user: Username=%s, SecretKey2FA=%s", account.UserName, account.SecretKey2FA)
+
 	if !Verify2FACode(account.SecretKey2FA, twoFACode.TwoFACode) {
+		log.Printf("Invalid 2FA code for user: %s", account.UserName)
 		utils.WriteJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid 2FA code"})
 		return
 	}
 
-	// Generate session for the account if it doesn't already have one
-	session.GenerateRandomSessions(db, account.AccID)
+	log.Printf("2FA verified successfully for user: %s", account.UserName)
 
-	// Generate scores for the logged-in user
+	session.GenerateRandomSessions(db, account.AccID)
 	scores.GenerateScoresForLoggedInUser(db, account.AccID)
 
-	// Respond with success message
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Login successful"})
 }
 
