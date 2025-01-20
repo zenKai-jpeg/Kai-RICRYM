@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backendGo/models"
+	"backendGo/scores"
 	"backendGo/session"
 	"backendGo/utils"
 
@@ -155,6 +156,9 @@ func Verify2FAHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 	// Generate session for the account if it doesn't already have one
 	session.GenerateRandomSessions(db, account.AccID)
+
+	// Generate scores for the logged-in user
+	scores.GenerateScoresForLoggedInUser(db, account.AccID)
 
 	// Respond with success message
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Login successful"})

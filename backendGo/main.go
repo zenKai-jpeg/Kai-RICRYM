@@ -11,7 +11,7 @@ import (
 	"backendGo/handlers"
 	"backendGo/session"
 	"backendGo/utils"
-)
+) // Add this new import
 
 func main() {
 	// Initialize the cache

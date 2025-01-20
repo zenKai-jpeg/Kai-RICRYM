@@ -1,5 +1,5 @@
 # Ignore the depreciated file in backendGo directory
-/backendGo/depreciated
+depreciated
 
 # Ignore the .env in backendGo directory
-/backendGo/.env
+.env
