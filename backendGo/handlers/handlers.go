@@ -154,7 +154,7 @@ func paginatedAccounts(db *sql.DB, page, limit int, search, sort, order, class, 
 	queryBuilder.WriteString(fmt.Sprintf(" ORDER BY %s %s LIMIT $%d OFFSET $%d", sortColumn, sortOrder, paramIndex, paramIndex+1))
 	params = append(params, limit, offset)
 
-	fmt.Println("Executing query:", queryBuilder.String())
+	// fmt.Println("Executing query:", queryBuilder.String())
 
 	rows, err := db.Query(queryBuilder.String(), params...)
 	if err != nil {

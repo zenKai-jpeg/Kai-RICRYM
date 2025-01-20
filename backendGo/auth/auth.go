@@ -275,7 +275,7 @@ func VerifyEmailHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 
 	// Redirect to login page
-	loginURL := "/login" // Or your desired login URL
+	loginURL := "http://localhost:5173/login" // Redirect to frontend login URL
 	http.Redirect(w, r, loginURL, http.StatusFound)
 }
 

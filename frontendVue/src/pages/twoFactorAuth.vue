@@ -31,7 +31,7 @@ export default {
           TwoFACode: this.twofaCode
         });
         this.message = response.data.message;
-        this.$router.push('/dashboard');
+        this.$router.push('/');
       } catch (error) {
         this.message = error.response.data.error;
       }

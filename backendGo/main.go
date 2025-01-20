@@ -9,7 +9,8 @@ import (
 	"backendGo/cache"
 	"backendGo/database"
 	"backendGo/handlers"
-	"backendGo/session"
+
+	// "backendGo/session"
 	"backendGo/utils"
 
 	"github.com/rs/cors"
@@ -30,7 +31,7 @@ func main() {
 	database.GenerateDataIfNeeded(db)
 
 	// Generate sessions for all accounts
-	session.GenerateSessionsForAllAccounts(db)
+	// session.GenerateSessionsForAllAccounts(db)
 
 	// Set up HTTP routes
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
